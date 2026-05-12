@@ -1,0 +1,29 @@
+# Tank 1990 - Network Configuration File
+# =========================================
+# Rules:
+#   - MASTER section: list each SLAVE's IP and port (one per line)
+#   - SLAVE  section: the MASTER's IP and port (one line)
+#
+# Player count = 1 (master) + number of uncommented slave entries
+#   1 slave  -> 2 players
+#   2 slaves -> 3 players
+#   3 slaves -> 4 players  (maximum)
+#
+# To add a player: uncomment a slave line under MASTER and add a
+# corresponding SLAVE block on that machine pointing back to master.
+
+# -------------------------------------------------------
+# MASTER SECTION  (read by the master instance)
+# List the IP:PORT of every slave that will connect.
+# -------------------------------------------------------
+MASTER
+172.26.138.127 5001
+#127.0.0.1 5002
+#127.0.0.1 5003
+
+# -------------------------------------------------------
+# SLAVE SECTION  (read by slave instances)
+# Only the master's IP and listening port go here.
+# -------------------------------------------------------
+SLAVE
+172.26.138.127 5000

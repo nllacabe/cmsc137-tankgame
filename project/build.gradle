@@ -1,0 +1,59 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'tank1990'
+version = '1.0-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+}
+
+sourceSets {
+    // Define the main source directory.
+    main {
+        java {
+            srcDirs 'src/main/java'
+        }
+        resources {
+            srcDirs 'src/main/resources'
+        }
+    }
+}
+
+dependencies {
+    testImplementation platform('org.junit:junit-bom:5.10.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+
+    implementation 'org.ini4j:ini4j:0.5.4'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+tasks.withType(Copy).configureEach {
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE // or EXCLUDE, WARN
+}
+
+application {
+    // Define the main class for the application.
+    mainClass = 'tank1990.Game'
+}
+
+task doxygen(type: Exec) {
+    description = 'Generates documentation using Doxygen'
+    group = 'Documentation'
+
+    commandLine 'doxygen', './Doxyfile'
+}
+
+run {
+    jvmArgs = [
+            '-XX:+UseG1GC',
+            '-XX:MaxGCPauseMillis=200',
+            '-Xms2g',
+            '-Xmx4g',
+    ]
+}

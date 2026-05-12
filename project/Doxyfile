@@ -1,0 +1,48 @@
+# Doxyfile for Tank1990 Game Project
+
+# Set the project name
+PROJECT_NAME           = "Tank1990"
+
+# Set the project version
+PROJECT_VERSION        = "1.0"
+
+# Input directory for source files (Java source files)
+INPUT                  = src/main/java/tank1990/
+
+RECURSIVE = YES
+
+# Set the file extensions for which Doxygen will parse the code (Java files)
+FILE_PATTERNS          = *.java
+
+# Set the output directory for the HTML documentation
+OUTPUT_DIRECTORY      = doc/
+
+# Set the documentation style (HTML)
+GENERATE_HTML         = YES
+
+# Set the HTML output format (simple HTML documentation)
+HTML_OUTPUT           = html
+
+# Enable indexing to make it easier to find functions, classes, etc.
+GENERATE_INDEX        = YES
+
+# Show class members and functions in the documentation
+EXTRACT_ALL           = YES
+
+# Enable generation of documentation for private members
+EXTRACT_PRIVATE       = YES
+
+# Enable detailed documentation of classes, functions, and variables
+EXTRACT_STATIC        = YES
+
+# Set the default layout for HTML documentation (e.g., use a side bar)
+HTML_COLORSTYLE       = 0
+
+# Enable diagrams and call graphs (requires Graphviz)
+HAVE_DOT              = YES
+DOT_PATH              = dot
+CALL_GRAPH            = YES
+CALLER_GRAPH          = YES
+
+# Other settings
+FILE_PATTERNS          = *.java
