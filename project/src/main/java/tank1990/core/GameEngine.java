@@ -85,21 +85,16 @@ public class GameEngine extends Subject {
 
         this.players = new ArrayList<>();
 
-        // Spawn local player(s) based on game mode
         if (this.gameMode == GameMode.MODE_SINGLE_PLAYER) {
             players.add(new Player(PlayerType.PLAYER_1, this.gameMode));
         } else if (this.gameMode == GameMode.MODE_MULTI_PLAYER) {
             players.add(new Player(PlayerType.PLAYER_1, this.gameMode));
             players.add(new Player(PlayerType.PLAYER_2, this.gameMode));
         } else if (this.gameMode == GameMode.MODE_NETWORK_MASTER) {
-            // Master always controls PLAYER_1; other players added after slaves connect
             players.add(new Player(PlayerType.PLAYER_1, this.gameMode));
         } else if (this.gameMode == GameMode.MODE_NETWORK_SLAVE) {
-            // Slave spawns a placeholder — type is corrected after assignment packet
-            // arrives
-            // We use PLAYER_2 as default; applyStatePacket will sync the real position
             players.add(new Player(PlayerType.PLAYER_2, this.gameMode));
-            localPlayerType = PlayerType.PLAYER_2; // updated after assignment packet
+            localPlayerType = PlayerType.PLAYER_2;
         }
 
         // Game level manager stores the players lives even if game engine is created
@@ -174,10 +169,14 @@ public class GameEngine extends Subject {
 
     }
 
-    // Network fields
+    // inside GameEngine class
     private NetworkManager networkManager;
     private PlayerType localPlayerType = PlayerType.PLAYER_1;
-    private boolean isGameOver = false; // explicit flag so broadcast is reliable
+    private boolean isGameOver = false;
+
+    // Resize tracking — rescale tank pixel positions when window size changes
+    private int lastAreaWidth = 0;
+    private int lastAreaHeight = 0;
 
     /**
      * Initializes the network for multiplayer mode.
@@ -193,41 +192,34 @@ public class GameEngine extends Subject {
         Thread netThread = new Thread(() -> {
             try {
                 if (isMasterNode) {
-                    // MASTER: wait for all slaves to connect then apply their inputs
                     networkManager.startMaster(
                             masterPort,
                             (InputPacket input) -> SwingUtilities.invokeLater(() -> applyInputPacket(input)),
                             (GameStatePacket state) -> {
-                                /* master does not need state from slaves */ });
+                            });
 
-                    // Spawn one Player per connected slave (master = PLAYER_1 already added)
                     int numPlayers = networkManager.getNumPlayers();
                     SwingUtilities.invokeLater(() -> {
                         for (int i = players.size(); i < numPlayers; i++) {
                             players.add(new Player(PlayerType.fromIndex(i), gameMode));
                         }
                     });
-
                 } else {
-                    // SLAVE: connect to master, receive full game snapshots each tick
                     networkManager.startSlave(
                             (GameStatePacket state) -> {
-                                /* legacy — unused */ },
+                            },
                             (FullGameSnapshot snap) -> SwingUtilities.invokeLater(() -> applySnapshot(snap)));
 
-                    // After startSlave() returns, localPlayerType is assigned by the master
                     PlayerType assigned = networkManager.getLocalPlayerType();
                     SwingUtilities.invokeLater(() -> {
                         players.clear();
                         players.add(new Player(assigned, gameMode));
                         localPlayerType = assigned;
-                        System.out.println("[GameEngine] Slave local player assigned: " + assigned);
                     });
                 }
 
-                if (onConnected != null) {
+                if (onConnected != null)
                     SwingUtilities.invokeLater(onConnected);
-                }
             } catch (Exception e) {
                 System.err.println("Failed to initialize network: " + e.getMessage());
                 e.printStackTrace();
@@ -237,10 +229,6 @@ public class GameEngine extends Subject {
         netThread.start();
     }
 
-    /**
-     * Applies an InputPacket received from a slave to the correct local Player.
-     * Must be called on the EDT.
-     */
     private void applyInputPacket(InputPacket input) {
         Player target = getPlayerByType(input.playerType);
         if (target == null)
@@ -256,75 +244,48 @@ public class GameEngine extends Subject {
         }
     }
 
-    /**
-     * Applies a full GameStatePacket received from the master.
-     * Updates x, y, direction and destroyed state of the matching remote player.
-     * Must be called on the EDT.
-     */
-    /**
-     * Applies a FullGameSnapshot received from the master.
-     * Synchronises all player states and bullet states on the slave screen.
-     * Must be called on the EDT.
-     */
     private void applySnapshot(FullGameSnapshot snap) {
-        // ── 1. Game over ──────────────────────────────────────────────────────
         if (snap.gameOver) {
             endGame();
             return;
         }
 
-        // ── 2. Player states ──────────────────────────────────────────────────
         for (PlayerState ps : snap.players) {
             Player p = getPlayerByType(ps.playerType);
-
             if (p == null) {
-                // Remote player we haven't seen yet — add them
                 p = new Player(ps.playerType, gameMode);
                 players.add(p);
             }
 
-            boolean isLocal = (ps.playerType == localPlayerType);
-
             if (ps.isDestroyed) {
-                // Master says this player is destroyed
                 if (!p.isTankDestroyed()) {
                     Blast blast = p.destroy();
                     if (blast != null)
                         blastFXs.add(blast);
                 }
             } else if (p.isTankDestroyed() && ps.remainingLives >= 0) {
-                // Master has respawned this player — respawn on slave side too
                 p.spawnTank();
-                // Immediately snap to master's authoritative position
                 if (p.getTank() != null) {
                     p.getTank().setX(ps.x);
                     p.getTank().setY(ps.y);
                     try {
                         p.getTank().setDir(Direction.valueOf(ps.direction));
-                    } catch (IllegalArgumentException ignored) {
+                    } catch (Exception ignored) {
                     }
                 }
             } else if (p.getTank() != null && !p.isTankDestroyed()) {
-                // Sync ALL players (including local) from master position.
-                // Master is the only authority — local keyboard only sends InputPackets.
                 p.getTank().setX(ps.x);
                 p.getTank().setY(ps.y);
                 try {
                     p.getTank().setDir(Direction.valueOf(ps.direction));
-                } catch (IllegalArgumentException ignored) {
+                } catch (Exception ignored) {
                 }
             }
         }
 
-        // Remove players from slave list that master no longer has
-        // (happens when a player exhausts all lives)
-        players.removeIf(p -> {
-            boolean masterHasIt = snap.players.stream()
-                    .anyMatch(ps -> ps.playerType == p.getPlayerType());
-            return !masterHasIt && p.getPlayerType() != localPlayerType;
-        });
+        players.removeIf(p -> snap.players.stream().noneMatch(ps -> ps.playerType == p.getPlayerType())
+                && p.getPlayerType() != localPlayerType);
 
-        // Check if all players have no remaining lives on slave side
         boolean allDead = players.stream()
                 .allMatch(p -> p.getRemainingLives() < 0 || (p.isTankDestroyed() && p.getRemainingLives() <= 0));
         if (allDead && !players.isEmpty()) {
@@ -332,68 +293,53 @@ public class GameEngine extends Subject {
             return;
         }
 
-        // ── 3. Bullet states — replace slave bullet list with master's ────────
         this.bullets.clear();
         for (BulletState bs : snap.bullets) {
             try {
                 Direction dir = Direction.valueOf(bs.direction);
-                Bullet b = new Bullet(bs.x, bs.y, dir);
-                this.bullets.add(b);
+                this.bullets.add(new Bullet(bs.x, bs.y, dir));
             } catch (Exception ignored) {
             }
         }
 
-        // ── 4. Tile damage — apply map changes from master ───────────────────
         GameLevel level = GameLevelManager.getInstance().getCurrentLevel();
         if (level != null && level.getMap() != null) {
-            tank1990.tile.Tile[][] map = level.getMap();
+            Tile[][] map = level.getMap();
             for (TileState ts : snap.tiles) {
                 if (ts.row < 0 || ts.row >= Globals.ROW_TILE_COUNT)
                     continue;
                 if (ts.col < 0 || ts.col >= Globals.COL_TILE_COUNT)
                     continue;
-
-                if (ts.isDestroyed) {
-                    // Tile fully destroyed on master — null it out on slave too
+                if (ts.isDestroyed)
                     map[ts.row][ts.col] = null;
-                } else if (map[ts.row][ts.col] != null) {
-                    // Tile is partially damaged — sync subpiece visibility
+                else if (map[ts.row][ts.col] != null)
                     map[ts.row][ts.col].applySubpieces(ts.subpieces);
-                }
             }
         }
     }
 
-    /** Legacy single-player-state handler — kept for compatibility. */
     private void applyStatePacket(GameStatePacket state) {
-        // No longer used in network mode — applySnapshot handles everything
     }
 
-    /** Returns the player matching the given PlayerType, or null. */
     public Player getPlayerByType(PlayerType type) {
-        for (Player p : players) {
+        for (Player p : players)
             if (p.getPlayerType() == type)
                 return p;
-        }
         return null;
     }
 
-    /** Returns the NetworkManager, or null if not in network mode. */
     public NetworkManager getNetworkManager() {
         return networkManager;
     }
 
-    /** True if this node is the network master. */
     public boolean isMasterNode() {
         return gameMode == GameMode.MODE_NETWORK_MASTER;
     }
 
-    /** True if this node is a network slave. */
     public boolean isSlaveNode() {
         return gameMode == GameMode.MODE_NETWORK_SLAVE;
     }
 
-    /** The PlayerType this node controls locally. */
     public PlayerType getLocalPlayerType() {
         return localPlayerType;
     }
@@ -403,9 +349,61 @@ public class GameEngine extends Subject {
      * This method is called periodically to update all the game objects and check
      * for collisions.
      */
+    /**
+     * Rescales all tank pixel positions when the game area is resized.
+     * Tanks store absolute pixel positions, so when the window changes size
+     * their positions must be scaled to match the new dimensions.
+     */
+    private void rescaleTankPositionsIfNeeded() {
+        java.awt.Dimension area = tank1990.panels.GamePanel.getGameAreaDimension();
+        if (area == null)
+            return;
+
+        int newW = area.width;
+        int newH = area.height;
+
+        // First call — just record the current size, no rescaling needed
+        if (lastAreaWidth == 0 || lastAreaHeight == 0) {
+            lastAreaWidth = newW;
+            lastAreaHeight = newH;
+            return;
+        }
+
+        // No change — nothing to do
+        if (newW == lastAreaWidth && newH == lastAreaHeight)
+            return;
+
+        // Window was resized — rescale all tank positions proportionally
+        double scaleX = (double) newW / lastAreaWidth;
+        double scaleY = (double) newH / lastAreaHeight;
+
+        for (Player p : players) {
+            if (p.getTank() != null) {
+                p.getTank().setX((int) Math.round(p.getTank().getX() * scaleX));
+                p.getTank().setY((int) Math.round(p.getTank().getY() * scaleY));
+            }
+        }
+        for (Enemy e : enemies) {
+            AbstractTank t = (AbstractTank) e;
+            t.setX((int) Math.round(t.getX() * scaleX));
+            t.setY((int) Math.round(t.getY() * scaleY));
+        }
+        for (tank1990.projectiles.Bullet b : bullets) {
+            if (b != null) {
+                b.setX((int) Math.round(b.getX() * scaleX));
+                b.setY((int) Math.round(b.getY() * scaleY));
+            }
+        }
+
+        lastAreaWidth = newW;
+        lastAreaHeight = newH;
+    }
+
     public void update() {
-        // Slave nodes: master is fully authoritative for all positions.
-        // Slave only animates blast FX and repaints — no local movement.
+        // Check if window was resized and rescale all tank positions proportionally
+        rescaleTankPositionsIfNeeded();
+
+        // Slave nodes: master is authoritative — only animate blasts and repaint
         if (isSlaveNode()) {
             updateBlasts();
             notify(EventType.REPAINT, null);
@@ -423,56 +421,41 @@ public class GameEngine extends Subject {
         updateGameInfo();
         updateBlasts();
 
-        // Broadcast full authoritative snapshot to all slaves every tick
+        // Broadcast full authoritative snapshot to slaves each tick
         if (isMasterNode() && networkManager != null) {
             FullGameSnapshot snap = new FullGameSnapshot();
 
-            // All player states
             for (Player p : this.players) {
                 if (p.getTank() == null)
                     continue;
                 snap.players.add(new PlayerState(
                         p.getPlayerType(),
-                        p.getTank().getX(),
-                        p.getTank().getY(),
+                        p.getTank().getX(), p.getTank().getY(),
                         p.getTank().getDir().name(),
                         p.isTankDestroyed(),
                         p.getRemainingLives()));
             }
-
-            // All bullet states
             for (Bullet b : this.bullets) {
                 if (b == null)
                     continue;
-                snap.bullets.add(new BulletState(
-                        b.getX(), b.getY(),
-                        b.getDir().name(),
-                        b.isEnemyBullet()));
+                snap.bullets.add(new BulletState(b.getX(), b.getY(), b.getDir().name(), b.isEnemyBullet()));
             }
-
-            // All tile damage states — send every tile that is damaged or destroyed
             GameLevel level = GameLevelManager.getInstance().getCurrentLevel();
             if (level != null && level.getMap() != null) {
-                tank1990.tile.Tile[][] map = level.getMap();
+                Tile[][] map = level.getMap();
                 for (int row = 0; row < Globals.ROW_TILE_COUNT; row++) {
                     for (int col = 0; col < Globals.COL_TILE_COUNT; col++) {
-                        tank1990.tile.Tile tile = map[row][col];
+                        Tile tile = map[row][col];
                         if (tile == null) {
-                            // Tile was fully destroyed — send a destroyed marker
                             snap.tiles.add(new TileState(row, col, true,
                                     new boolean[Globals.TILE_SUBDIVISION][Globals.TILE_SUBDIVISION]));
                         } else if (tile.hasDamage()) {
-                            // Tile is partially damaged — send its subpiece state
                             snap.tiles.add(new TileState(row, col, false, tile.getSubpiecesAsBoolean()));
                         }
                     }
                 }
             }
-
-            // Game over flag — use explicit flag so it persists even after
-            // players list is cleared during the transition
             snap.gameOver = this.isGameOver;
-
             networkManager.broadcastSnapshot(snap);
         }
 
@@ -707,7 +690,6 @@ public class GameEngine extends Subject {
     public void reset() {
         this.isStopped = false;
         this.isPaused = false;
-        this.isGameOver = false;
 
         // Reset game objects
         this.players.clear();
@@ -716,14 +698,21 @@ public class GameEngine extends Subject {
         this.blastFXs.clear();
         this.bullets.clear();
 
-        // Add first player by default
-        players.add(new Player(PlayerType.PLAYER_1, this.gameMode));
+        this.isGameOver = false;
+        this.lastAreaWidth = 0;
+        this.lastAreaHeight = 0;
 
-        // Add second player if game mode is local multiplayer
-        if (this.gameMode == GameMode.MODE_MULTI_PLAYER) {
+        if (this.gameMode == GameMode.MODE_SINGLE_PLAYER) {
+            players.add(new Player(PlayerType.PLAYER_1, this.gameMode));
+        } else if (this.gameMode == GameMode.MODE_MULTI_PLAYER) {
+            players.add(new Player(PlayerType.PLAYER_1, this.gameMode));
             players.add(new Player(PlayerType.PLAYER_2, this.gameMode));
+        } else if (this.gameMode == GameMode.MODE_NETWORK_MASTER) {
+            players.add(new Player(PlayerType.PLAYER_1, this.gameMode));
+        } else if (this.gameMode == GameMode.MODE_NETWORK_SLAVE) {
+            players.add(new Player(PlayerType.PLAYER_2, this.gameMode));
+            localPlayerType = PlayerType.PLAYER_2;
         }
-        // Network modes: players are added after slaves connect via initNetwork()
     }
 
     /**
@@ -737,7 +726,6 @@ public class GameEngine extends Subject {
         GameLevel currentGameLevel = GameLevelManager.getInstance().nextLevel();
         if (currentGameLevel != null) {
             this.currentGameLevel = currentGameLevel;
-            // Disable enemy spawning in network modes
             if (isMasterNode() || isSlaveNode()) {
                 this.currentGameLevel.setNetworkMode(true);
             }
@@ -805,7 +793,7 @@ public class GameEngine extends Subject {
             return;
         }
 
-        // In network mode: game over when only 1 player remains (last one standing)
+        // Network mode: last one standing wins
         if ((isMasterNode() || isSlaveNode()) && this.players.size() == 1) {
             endGame();
             return;
@@ -818,8 +806,7 @@ public class GameEngine extends Subject {
     private void updateGameLevel() {
         GameLevel gameLevel = GameLevelManager.getInstance().getCurrentLevel();
 
-        // In network mode there are no enemies — skip the zero-enemy win condition
-        // so the master doesn't immediately go to the score screen.
+        // In network mode there are no enemies — skip zero-enemy win condition
         if (!isMasterNode() && !isSlaveNode()) {
             if (gameLevel.getRemainingEnemyTanks() == 0 && gameLevel.getActiveEnemyTankCount() == 0) {
                 System.out.println("All enemy tanks destroyed, going to next level...");
@@ -950,14 +937,13 @@ public class GameEngine extends Subject {
                         if (tankBounds == null)
                             continue;
 
+                        // Check if bullet intersects with player tank
                         if (RectangleBound.isCollided(bulletBounds, tankBounds)) {
-                            boolean hitByEnemy = bullet.isEnemyBullet();
-                            // Friendly fire: player bullet hits a different player
-                            boolean hitByPlayer = !bullet.isEnemyBullet()
-                                    && !bullet.isOwnedBy(player);
-
-                            if (hitByEnemy || hitByPlayer) {
+                            // Check if bullet belongs to enemy
+                            if (bullet.isEnemyBullet()) {
+                                // Player tank hit by enemy bullet
                                 player.getDamage();
+
                                 Blast blast = bullet.destroy();
                                 blastFXs.add(blast);
                                 bulletsToRemove.add(bullet);
@@ -1373,11 +1359,9 @@ public class GameEngine extends Subject {
      */
     private void endGame() {
         if (this.isGameOver)
-            return; // prevent double-trigger
+            return;
         this.isGameOver = true;
-        stop(); // Stop the game engine
-
-        // Independent timer so it fires even when gameTimer is stopped (slave nodes)
+        stop();
         Timer delayedTimer = new Timer(2000, e -> {
             notify(EventType.GAMEOVER, GameLevelManager.getInstance().getGameScore());
         });
@@ -1393,10 +1377,8 @@ public class GameEngine extends Subject {
      * @return true if the bullet should be stopped, false otherwise
      */
     private boolean destroyEagleTile(Tile tile) {
-        // In network mode the eagle does not exist — skip
         if (isMasterNode() || isSlaveNode())
-            return true;
-
+            return true; // No eagle in network mode
         tile.destroy(null);
         endGame();
         return true;

@@ -153,17 +153,15 @@ public class GameLevel implements Serializable {
     }
 
     /**
-     * Enables network mode — strips the eagle tile, zeros enemy counts,
-     * and prevents any enemy spawning. Call this before startGameLevel().
+     * Enables network mode — strips eagle, zeros enemies, prevents spawning.
      */
     public void setNetworkMode(boolean networkMode) {
         this.isNetworkMode = networkMode;
         if (networkMode && this.levelInfo != null) {
             MapGenerator.stripEagleAndEnemies(this.levelInfo);
-            this.eagleLocation = null; // No eagle in network mode
+            this.eagleLocation = null;
             this.enemyTankCounts.replaceAll((type, count) -> 0);
             this.totalEnemyTankCount = 0;
-            System.out.println("[GameLevel] Network mode — eagle and enemies removed.");
         }
     }
 

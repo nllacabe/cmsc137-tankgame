@@ -16,7 +16,6 @@ import tank1990.tank.AbstractTank;
  *          interaction with tanks and bullets.
  */
 public abstract class Tile extends StaticGameObject {
-    // Fixed UID matching the binary map files — must never change
     private static final long serialVersionUID = -8644477400178611263L;
     protected TileType type = null;
     protected BlockConfiguration blockConf = BlockConfiguration.BLOCK_CONF_FULL;
@@ -47,7 +46,6 @@ public abstract class Tile extends StaticGameObject {
 
         this.type = type;
         this.blockConf = BlockConfiguration.BLOCK_CONF_FULL;
-        this.gloc = new GridLocation(y, x); // y = row index, x = col index
         this.subpieces = new Boolean[Globals.TILE_SUBDIVISION][Globals.TILE_SUBDIVISION];
         setSubPieceVisibility(this.blockConf);
     }
@@ -112,43 +110,39 @@ public abstract class Tile extends StaticGameObject {
             return;
         }
 
-        setSize(Utils.normalizeDimension(g, Globals.TILE_WIDTH, Globals.TILE_HEIGHT));
-
-        // Compute pixel centre from clipBounds every frame so that position
-        // always uses the same reference dimensions as normalizeDimension above.
+        // Always recompute size and position from clip bounds every frame.
+        // Never cache pixel coordinates — window can be any size at any time.
         java.awt.Rectangle clipBounds = g.getClipBounds();
-        int cellWidth = clipBounds.width / Globals.COL_TILE_COUNT;
-        int cellHeight = clipBounds.height / Globals.ROW_TILE_COUNT;
+        int cellW = clipBounds.width / Globals.COL_TILE_COUNT;
+        int cellH = clipBounds.height / Globals.ROW_TILE_COUNT;
+
+        setSize(new java.awt.Dimension(cellW, cellH));
 
         if (this.gloc != null) {
-            setX(this.gloc.colIndex() * cellWidth + cellWidth / 2);
-            setY(this.gloc.rowIndex() * cellHeight + cellHeight / 2);
-        } else if (!isCoordinatesUpdated) {
-            // Fallback for tiles without an explicit gloc (uses raw index stored at
-            // construction)
-            setX(this.x * cellWidth + cellWidth / 2);
-            setY(this.y * cellHeight + cellHeight / 2);
-            isCoordinatesUpdated = true;
+            setX(this.gloc.colIndex() * cellW + cellW / 2);
+            setY(this.gloc.rowIndex() * cellH + cellH / 2);
+        } else {
+            // Fallback: raw index stored at construction time
+            setX(this.x * cellW + cellW / 2);
+            setY(this.y * cellH + cellH / 2);
         }
-        this.spriteAnimationFX.setTargetSize(getSize().width, getSize().height);
+
+        this.spriteAnimationFX.setTargetSize(cellW, cellH);
         this.spriteAnimationFX.draw(g, x, y, 0.0);
 
-        boolean allSubpiecesDestroyed = true;
-        // If the sub-pieces are not visible, draw it as a black rectangle
-        // Tile center is at (x, y). Top-left corner = (x - w/2, y - h/2).
-        // Each subpiece occupies (w/SUBDIV) x (h/SUBDIV) pixels.
-        int subW = getSize().width / Globals.TILE_SUBDIVISION;
-        int subH = getSize().height / Globals.TILE_SUBDIVISION;
-        int tileLeft = x - getSize().width / 2;
-        int tileTop = y - getSize().height / 2;
+        // Draw black over any missing subpieces (damaged bricks etc.)
+        // Top-left of this tile in pixel space:
+        int tileLeft = x - cellW / 2;
+        int tileTop = y - cellH / 2;
+        int subW = cellW / Globals.TILE_SUBDIVISION;
+        int subH = cellH / Globals.TILE_SUBDIVISION;
 
+        boolean allSubpiecesDestroyed = true;
         for (int r = 0; r < Globals.TILE_SUBDIVISION; r++) {
             for (int c = 0; c < Globals.TILE_SUBDIVISION; c++) {
                 if (!this.subpieces[r][c]) {
-                    int subX = tileLeft + c * subW;
-                    int subY = tileTop + r * subH;
                     g.setColor(Color.BLACK);
-                    g.fillRect(subX, subY, subW, subH);
+                    g.fillRect(tileLeft + c * subW, tileTop + r * subH, subW, subH);
                 } else {
                     allSubpiecesDestroyed = false;
                 }
@@ -172,8 +166,7 @@ public abstract class Tile extends StaticGameObject {
     }
 
     /**
-     * Returns true if any subpiece has been damaged (not all visible).
-     * Used by master to decide whether to include this tile in the snapshot.
+     * Returns true if any subpiece is missing (tile has been partially damaged).
      */
     public boolean hasDamage() {
         if (this.subpieces == null)
@@ -186,7 +179,7 @@ public abstract class Tile extends StaticGameObject {
     }
 
     /**
-     * Returns subpieces as a primitive boolean[][] for serialization.
+     * Returns subpieces as primitive boolean[][] for network serialization.
      */
     public boolean[][] getSubpiecesAsBoolean() {
         int sz = Globals.TILE_SUBDIVISION;
@@ -198,8 +191,7 @@ public abstract class Tile extends StaticGameObject {
     }
 
     /**
-     * Applies a damage state received from the master (network sync).
-     * Sets each subpiece visibility from the provided array.
+     * Applies subpiece visibility from a network snapshot (slave sync).
      */
     public void applySubpieces(boolean[][] incoming) {
         int sz = Globals.TILE_SUBDIVISION;

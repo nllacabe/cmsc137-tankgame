@@ -13,7 +13,6 @@ import tank1990.network.NetworkManager;
 import tank1990.network.NetworkManager.InputPacket;
 import tank1990.player.Player;
 import tank1990.player.PlayerType;
-import tank1990.network.NetworkManager.FullGameSnapshot;
 
 /**
  * @class GamePanel
@@ -25,6 +24,7 @@ import tank1990.network.NetworkManager.FullGameSnapshot;
 public class GamePanel extends AbstractPanel implements ActionListener, KeyListener, Observer {
 
     private static Dimension gameAreaDimension = null;
+    private static GameAreaPanel gameplayAreaRef = null; // live reference for dynamic sizing
 
     GameEngine gameEngine = null;
 
@@ -118,29 +118,24 @@ public class GamePanel extends AbstractPanel implements ActionListener, KeyListe
             case EventType.GAMEOVER: {
                 System.out.println("Game Panel: Game Over Event Triggered");
                 this.isGameOver = true;
-
                 // Update Player score if current game score is higher
                 int playerCurrentScore = ((GameScoreStruct) data).getTotalScore();
                 Game.iPlayerScore = Math.max(Game.iPlayerScore, playerCurrentScore);
 
-                // Update high score
+                // Update high score if current score is higher than the saved high score
                 if (playerCurrentScore > ConfigHandler.getInstance().getBattleCityProperties().hiScore()) {
                     ConfigHandler.getInstance().setProperty("BattleCity", "HiScore",
                             Integer.toString(playerCurrentScore));
                 }
 
-                // Network mode: show dedicated network game over panel
-                if (gameEngine.isMasterNode() || gameEngine.isSlaveNode()) {
-                    showNetworkGameOverPanel((GameScoreStruct) data);
-                } else {
-                    // Local/single player: existing score panel flow
-                    showGameOverOverlay();
-                    Timer gameScoreTimer = new Timer(Globals.GAMEOVER_OVERLAY_DURATION, e -> {
-                        showGameScoreOverlay((GameScoreStruct) data);
-                    });
-                    gameScoreTimer.setRepeats(false);
-                    gameScoreTimer.start();
-                }
+                showGameOverOverlay();
+                // Add timer to show game score overlay after GAMEOVER_OVERLAY_DURATION
+                // milliseconds
+                Timer gameScoreTimer = new Timer(Globals.GAMEOVER_OVERLAY_DURATION, e -> {
+                    showGameScoreOverlay((GameScoreStruct) data);
+                });
+                gameScoreTimer.setRepeats(false); // Only execute once
+                gameScoreTimer.start();
                 break;
             }
             case EventType.GAME_LOADED: {
@@ -167,8 +162,49 @@ public class GamePanel extends AbstractPanel implements ActionListener, KeyListe
     protected void initPanel() {
         setFocusable(true);
         requestFocusInWindow();
-        setBackground(Color.RED);
+        setBackground(Color.BLACK);
         addKeyListener(this);
+
+        // Keep gameAreaDimension in sync whenever the window is resized,
+        // so all coordinate conversions and hitboxes stay accurate.
+        addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                updateLayoutForCurrentSize();
+            }
+        });
+    }
+
+    /**
+     * Recalculates all panel dimensions based on the current frame size.
+     * Called on startup and whenever the window is resized.
+     */
+    private void updateLayoutForCurrentSize() {
+        if (gameplayArea == null || rootPanel == null)
+            return;
+
+        int w = frame.getContentPane().getWidth();
+        int h = frame.getContentPane().getHeight();
+        if (w <= 0 || h <= 0)
+            return;
+
+        int gameplaySize = Math.min(w * 3 / 4, h);
+
+        gameplayArea.setPreferredSize(new Dimension(gameplaySize, gameplaySize));
+        gameAreaDimension = new Dimension(gameplaySize, gameplaySize);
+
+        if (gameInfoPanel != null) {
+            gameInfoPanel.setPreferredSize(new Dimension(w - gameplaySize, gameplaySize));
+        }
+        if (gamePanel != null) {
+            gamePanel.setBounds(0, 0, w, h);
+            gamePanel.revalidate();
+        }
+
+        rootPanel.setPreferredSize(new Dimension(w, h));
+        rootPanel.revalidate();
+        revalidate();
+        repaint();
     }
 
     @Override
@@ -188,6 +224,7 @@ public class GamePanel extends AbstractPanel implements ActionListener, KeyListe
         this.gameplayArea = new GameAreaPanel();
         this.gameplayArea.setBackground(Color.BLACK);
         this.gameplayArea.setOpaque(true);
+        gameplayAreaRef = this.gameplayArea; // keep static ref for live sizing
 
         // Calculate dimensions for square gameplay area
         int gameplaySize = Math.min(Globals.WINDOW_WIDTH * 3 / 4, Globals.WINDOW_HEIGHT);
@@ -207,6 +244,9 @@ public class GamePanel extends AbstractPanel implements ActionListener, KeyListe
 
         // Add the root panel to this GamePanel component
         this.add(this.rootPanel, BorderLayout.CENTER);
+
+        // Apply correct dimensions immediately based on current frame size
+        SwingUtilities.invokeLater(this::updateLayoutForCurrentSize);
     }
 
     /**
@@ -222,6 +262,16 @@ public class GamePanel extends AbstractPanel implements ActionListener, KeyListe
     }
 
     public static Dimension getGameAreaDimension() {
+        // Always return the actual rendered size of the gameplay area.
+        // This keeps Utils.gridLoc2Loc() and checkMovable() in sync with
+        // the current window size without any caching lag.
+        if (gameplayAreaRef != null) {
+            int w = gameplayAreaRef.getWidth();
+            int h = gameplayAreaRef.getHeight();
+            if (w > 0 && h > 0) {
+                gameAreaDimension = new Dimension(w, h);
+            }
+        }
         return gameAreaDimension;
     }
 
@@ -338,7 +388,7 @@ public class GamePanel extends AbstractPanel implements ActionListener, KeyListe
         int key = e.getKeyCode();
         int location = e.getKeyLocation();
 
-        // ── Network slave: send input to master only — master drives all positions ──
+        // ── Network slave: route all key presses to master via InputPacket ──
         if (gameEngine.isSlaveNode()) {
             NetworkManager nm = gameEngine.getNetworkManager();
             if (nm != null) {
@@ -439,7 +489,7 @@ public class GamePanel extends AbstractPanel implements ActionListener, KeyListe
         int key = e.getKeyCode();
         int location = e.getKeyLocation();
 
-        // ── Network slave: send stop commands to master only ──
+        // ── Network slave: route key releases to master ──
         if (gameEngine.isSlaveNode()) {
             NetworkManager nm = gameEngine.getNetworkManager();
             if (nm != null) {
@@ -601,15 +651,6 @@ public class GamePanel extends AbstractPanel implements ActionListener, KeyListe
         this.rootPanel.repaint();
 
         this.gameEngine.getCurrentLevel().setCurrentState(LevelState.GET_READY);
-
-        // In network mode, slaves auto-advance after a short delay instead of
-        // waiting for ENTER — the master drives the level start.
-        if (this.gameEngine.isSlaveNode()) {
-            new javax.swing.Timer(2000, e -> {
-                SwingUtilities.invokeLater(this::showGamePanel);
-                ((javax.swing.Timer) e.getSource()).stop();
-            }).start();
-        }
     }
 
     /**
@@ -701,48 +742,6 @@ public class GamePanel extends AbstractPanel implements ActionListener, KeyListe
      * Shows the game over overlay on top of the game area.
      * Displays "GAME OVER" text centered over the gameplay area.
      */
-    /**
-     * Shows the dedicated NetworkGameOverPanel for master/slave games.
-     * Determines the surviving player from the game score and local player type.
-     */
-    private void showNetworkGameOverPanel(GameScoreStruct gameScore) {
-        // Shut down network connections
-        if (gameEngine.getNetworkManager() != null) {
-            gameEngine.getNetworkManager().shutdown();
-        }
-
-        // Determine which player survived (has lives remaining)
-        PlayerType survivor = null;
-        for (tank1990.player.PlayerType pt : tank1990.player.PlayerType.values()) {
-            tank1990.player.Player p = gameEngine.getPlayerByType(pt);
-            if (p != null && !p.isTankDestroyed() && p.getRemainingLives() >= 0) {
-                survivor = pt;
-                break;
-            }
-        }
-
-        final PlayerType finalSurvivor = survivor;
-        final PlayerType localType = gameEngine.getLocalPlayerType();
-
-        SwingUtilities.invokeLater(() -> {
-            // Replace entire frame content with the game over panel
-            frame.getContentPane().removeAll();
-
-            NetworkGameOverPanel gameOverPanel = new NetworkGameOverPanel(
-                    frame,
-                    getParentPanel(),
-                    finalSurvivor,
-                    localType,
-                    gameScore);
-
-            frame.add(gameOverPanel);
-            frame.revalidate();
-            frame.repaint();
-
-            gameOverPanel.start();
-        });
-    }
-
     private void showGameOverOverlay() {
         // Don't create multiple pause panels
         if (this.gameOverPanel != null) {

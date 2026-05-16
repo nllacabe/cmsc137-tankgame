@@ -20,7 +20,6 @@ public class Game {
         SwingUtilities.invokeLater(() -> {
             JFrame frame = new JFrame(Globals.GAME_TITLE);
             frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-            frame.setResizable(false);
 
             if (Globals.WINDOW_WIDTH == 0 || Globals.WINDOW_HEIGHT == 0) {
                 Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
@@ -30,11 +29,13 @@ public class Game {
                 frame.pack();
             }
 
-            // Lock window size — prevent any resize after initial pack()
+            // Lock window size AFTER pack() — on Linux the window manager may
+            // ignore setResizable(false) if called before the frame is sized.
             Dimension lockedSize = frame.getSize();
             frame.setMinimumSize(lockedSize);
             frame.setMaximumSize(lockedSize);
             frame.setPreferredSize(lockedSize);
+            frame.setResizable(false);
 
             MenuPanel menuPanel = new MenuPanel(frame);
             frame.add(menuPanel);
