@@ -181,6 +181,8 @@ public class NetworkGameOverPanel extends AbstractPanel implements KeyListener {
         if (countdownTimer != null)
             countdownTimer.stop();
 
+        tank1990.core.GameLevelManager.getInstance().reset();
+
         SwingUtilities.invokeLater(() -> {
             frame.getContentPane().removeAll();
             MenuPanel menuPanel = new MenuPanel(frame);

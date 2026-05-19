@@ -266,7 +266,7 @@ public class MapGenerator {
         Tile[] neighbors = new Tile[5];
         for (int i = -1; i <= 1; i++) {
             for (int j = -1; j <= 1; j++) {
-                if (gLoc.rowIndex() == i && gLoc.colIndex() == j)
+                if (i == 0 && j == 0)
                     continue;
 
                 if (gLoc.rowIndex() + i < 0 || gLoc.colIndex() + j < 0)
