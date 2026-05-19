@@ -362,6 +362,12 @@ public class GameEngine extends Subject {
                 }
             }
         }
+
+        // ── 5. If slave is still on the GET_READY screen, signal the panel to advance ──
+        GameLevel currentLevel = GameLevelManager.getInstance().getCurrentLevel();
+        if (currentLevel != null && currentLevel.getCurrentState() == LevelState.GET_READY) {
+            notify(EventType.SLAVE_LEVEL_START, null);
+        }
     }
 
     /** Legacy single-player-state handler — kept for compatibility. */
@@ -751,7 +757,9 @@ public class GameEngine extends Subject {
      */
     public void startGameLevel() {
         start();
-        this.currentGameLevel.setCurrentState(LevelState.PLAYING);
+        if (this.currentGameLevel != null) {
+            this.currentGameLevel.setCurrentState(LevelState.PLAYING);
+        }
     }
 
     /**

@@ -16,5 +16,6 @@ public enum EventType {
     NEXT_LEVEL,
     GAMEOVER,
     GAME_LOADED,
-    GAME_SAVED
+    GAME_SAVED,
+    SLAVE_LEVEL_START  // fired on slave when master's first snapshot arrives
 }

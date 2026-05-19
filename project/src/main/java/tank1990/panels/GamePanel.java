@@ -158,6 +158,13 @@ public class GamePanel extends AbstractPanel implements ActionListener, KeyListe
                 popupTimer.start();
                 break;
             }
+            case EventType.SLAVE_LEVEL_START: {
+                // Master sent its first snapshot — slave dismisses Stage screen and starts
+                if (gameEngine.isSlaveNode()) {
+                    SwingUtilities.invokeLater(this::showGamePanel);
+                }
+                break;
+            }
             default:
                 break;
         }
@@ -602,14 +609,8 @@ public class GamePanel extends AbstractPanel implements ActionListener, KeyListe
 
         this.gameEngine.getCurrentLevel().setCurrentState(LevelState.GET_READY);
 
-        // In network mode, slaves auto-advance after a short delay instead of
-        // waiting for ENTER — the master drives the level start.
-        if (this.gameEngine.isSlaveNode()) {
-            new javax.swing.Timer(2000, e -> {
-                SwingUtilities.invokeLater(this::showGamePanel);
-                ((javax.swing.Timer) e.getSource()).stop();
-            }).start();
-        }
+        // Slave advances when the master's first snapshot arrives (SLAVE_LEVEL_START event).
+        // No fixed timer here — the slave stays on Stage screen until master presses Enter.
     }
 
     /**
